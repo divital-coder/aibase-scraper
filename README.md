@@ -38,41 +38,70 @@ Modern SPA with real-time updates.
 | State | TanStack Query |
 | Real-time | WebSocket |
 
-## Installation
+## Prerequisites
 
-From the root of the repository, run:
+Before starting, ensure you have the following installed:
+
+- [Rust](https://rustup.rs/) 1.75+
+- [Bun](https://bun.sh/) 1.0+
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose
+
+## Quick Start
+
+Follow these steps in order to get the application running:
+
+### Step 1: Clone the Repository
 
 ```bash
 git clone https://github.com/divital-coder/aibase-scraper.git
 cd aibase-scraper
 ```
 
-### Prerequisites
+### Step 2: Start the PostgreSQL Database
 
-- Rust 1.75+
-- Bun 1.0+
-- Docker and Docker Compose
-
-## Usage
-
-The repository consists of three main components that need to be started in order:
-
-### 1. Start PostgreSQL
+The database runs in a Docker container. Start it with:
 
 ```bash
 docker compose up -d
 ```
 
-### 2. Run the Backend
+Verify it's running:
+
+```bash
+docker ps
+# Should show: aibase-scraper-db running on port 5432
+```
+
+### Step 3: Configure Environment Variables
+
+Copy the example environment file for the backend:
+
+```bash
+cp .env.example backend/.env
+```
+
+The default configuration works out of the box with the Docker PostgreSQL setup.
+
+### Step 4: Start the Backend Server
+
+Open a terminal and run:
 
 ```bash
 cd backend
 cargo run --release
 ```
 
-The backend will start on `http://localhost:3001`
+Wait for the message:
 
-### 3. Run the Frontend
+```
+INFO aibase_scraper: Server listening on 127.0.0.1:3001
+```
+
+The backend is now running at `http://localhost:3001`
+
+### Step 5: Start the Frontend
+
+Open a new terminal and run:
 
 ```bash
 cd frontend
@@ -80,7 +109,17 @@ bun install
 bun dev --port 3002
 ```
 
-The frontend will start on `http://localhost:3002`
+The frontend is now running at `http://localhost:3002`
+
+### Step 6: Open the Application
+
+Open your browser and navigate to:
+
+```
+http://localhost:3002
+```
+
+You should see the dashboard. Navigate to the **Scraper** page to start collecting articles.
 
 ## Scraping Modes
 
@@ -100,6 +139,39 @@ Scrapes articles by ID range. Best for initial data collection.
 curl -X POST http://localhost:3001/api/scraper/start-range \
   -H "Content-Type: application/json" \
   -d '{"start_id": 14000, "end_id": 24178}'
+```
+
+## Stopping the Application
+
+### Stop Frontend
+Press `Ctrl+C` in the frontend terminal.
+
+### Stop Backend
+Press `Ctrl+C` in the backend terminal.
+
+### Stop Database
+
+```bash
+# Stop but keep data
+docker compose stop
+
+# Stop and remove all data
+docker compose down -v
+```
+
+## Restarting After a Break
+
+If you've stopped the application and want to restart:
+
+```bash
+# 1. Start database (from project root)
+docker compose up -d
+
+# 2. Start backend (in one terminal)
+cd backend && cargo run --release
+
+# 3. Start frontend (in another terminal)
+cd frontend && bun dev --port 3002
 ```
 
 ## API Reference
@@ -196,6 +268,37 @@ docker compose up -d
 
 # View logs
 docker compose logs -f postgres
+```
+
+## Troubleshooting
+
+### "Address already in use" Error
+
+Kill the process using the port:
+
+```bash
+# For backend (port 3001)
+lsof -ti :3001 | xargs kill -9
+
+# For frontend (port 3002)
+lsof -ti :3002 | xargs kill -9
+```
+
+### Database Connection Failed
+
+Ensure PostgreSQL is running:
+
+```bash
+docker compose up -d
+docker ps  # Verify container is running
+```
+
+### Frontend Can't Connect to Backend
+
+Check that the backend is running and accessible:
+
+```bash
+curl http://localhost:3001/api/stats
 ```
 
 ## Performance
