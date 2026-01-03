@@ -1,30 +1,61 @@
 # AIBase Scraper
 
-A web scraper for https://news.aibase.com with a Rust backend, PostgreSQL database, and React frontend.
+**A high-performance web scraper for [AIBase News](https://news.aibase.com) built with Rust and React. Features incremental scraping, full-text search, real-time progress tracking, and a modern dark-themed UI.**
 
-## Features
+## Technical Architecture
 
-- Discover and scrape articles from AIBase news
-- Incremental scraping (only fetches new articles)
-- Full-text search across all articles
-- Real-time scrape progress via WebSocket
-- Dashboard with statistics
-- Configurable rate limiting and settings
+The system follows a three-tier architecture:
 
-## Tech Stack
+### 1. Backend (Rust)
+High-performance async scraper with rate limiting.
 
-- **Backend**: Rust (Axum, reqwest, scraper, sqlx)
-- **Database**: PostgreSQL with full-text search
-- **Frontend**: Bun + Vite + React + shadcn/ui
+| Component | Technology |
+|-----------|------------|
+| Web Framework | Axum |
+| HTTP Client | reqwest |
+| HTML Parser | scraper |
+| Database | sqlx (PostgreSQL) |
+| Rate Limiter | governor |
 
-## Prerequisites
+### 2. Database (PostgreSQL)
+Full-text search with tsvector indexing.
 
-- Rust (1.75+)
-- Bun (1.0+)
+| Feature | Implementation |
+|---------|----------------|
+| Full-text Search | GIN index on tsvector |
+| Deduplication | Unique constraint on external_id |
+| Migrations | sqlx-migrate |
+
+### 3. Frontend (React)
+Modern SPA with real-time updates.
+
+| Component | Technology |
+|-----------|------------|
+| Runtime | Bun |
+| Build Tool | Vite |
+| UI Framework | React 18 |
+| Components | shadcn/ui |
+| State | TanStack Query |
+| Real-time | WebSocket |
+
+## Installation
+
+From the root of the repository, run:
+
+```bash
+git clone https://github.com/divital-coder/aibase-scraper.git
+cd aibase-scraper
+```
+
+### Prerequisites
+
+- Rust 1.75+
+- Bun 1.0+
 - Docker and Docker Compose
-- PostgreSQL (or use Docker)
 
-## Getting Started
+## Usage
+
+The repository consists of three main components that need to be started in order:
 
 ### 1. Start PostgreSQL
 
@@ -36,83 +67,146 @@ docker compose up -d
 
 ```bash
 cd backend
-cp ../.env.example .env
-cargo run
+cargo run --release
 ```
 
-The backend will start on http://localhost:3001
+The backend will start on `http://localhost:3001`
 
 ### 3. Run the Frontend
 
 ```bash
 cd frontend
 bun install
-bun dev
+bun dev --port 3002
 ```
 
-The frontend will start on http://localhost:3000
+The frontend will start on `http://localhost:3002`
 
-## API Endpoints
+## Scraping Modes
+
+### Pagination Mode
+Scrapes articles from listing pages. Best for regular updates.
+
+```bash
+curl -X POST http://localhost:3001/api/scraper/start \
+  -H "Content-Type: application/json" \
+  -d '{"scrape_type": "incremental", "max_pages": 10}'
+```
+
+### ID Range Mode
+Scrapes articles by ID range. Best for initial data collection.
+
+```bash
+curl -X POST http://localhost:3001/api/scraper/start-range \
+  -H "Content-Type: application/json" \
+  -d '{"start_id": 14000, "end_id": 24178}'
+```
+
+## API Reference
 
 ### Articles
-- `GET /api/articles` - List articles with pagination and search
-- `GET /api/articles/:id` - Get single article
-- `DELETE /api/articles/:id` - Delete article
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/articles` | List articles with pagination and search |
+| GET | `/api/articles/:id` | Get single article by ID |
+| DELETE | `/api/articles/:id` | Delete article |
+
+**Query Parameters for listing:**
+- `page` - Page number (default: 1)
+- `per_page` - Items per page (default: 20)
+- `search` - Full-text search query
+- `tag` - Filter by tag
 
 ### Scraper
-- `POST /api/scraper/start` - Start scraping job
-- `POST /api/scraper/stop` - Stop current job
-- `GET /api/scraper/status` - Get current job status
-- `GET /api/scraper/runs` - List past scrape runs
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/scraper/start` | Start pagination scrape |
+| POST | `/api/scraper/start-range` | Start ID range scrape |
+| POST | `/api/scraper/stop` | Stop current job |
+| GET | `/api/scraper/status` | Get current job status |
+| GET | `/api/scraper/runs` | List past scrape runs |
 
 ### Statistics
-- `GET /api/stats` - Dashboard statistics
-- `GET /api/stats/tags` - Tag distribution
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/stats` | Dashboard statistics |
+| GET | `/api/stats/tags` | Tag distribution |
 
 ### Settings
-- `GET /api/settings` - Get all settings
-- `PATCH /api/settings/:key` - Update setting
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/settings` | Get all settings |
+| PATCH | `/api/settings/:key` | Update setting |
 
 ### WebSocket
-- `WS /ws/scrape-progress` - Real-time scrape progress
 
-## Usage
-
-1. Open http://localhost:3000
-2. Go to the Scraper page
-3. Configure max pages and scrape type
-4. Click "Start Scrape"
-5. Watch real-time progress
-6. Browse articles in the Articles page
+| Endpoint | Description |
+|----------|-------------|
+| `WS /ws/scrape-progress` | Real-time scrape progress |
 
 ## Configuration
 
-Environment variables (backend/.env):
+Environment variables (`backend/.env`):
 
-```
+```bash
+# Database
 DATABASE_URL=postgres://scraper:scraper_password@localhost:5432/aibase_scraper
-RUST_LOG=info,aibase_scraper=debug
+
+# Server
 SERVER_HOST=127.0.0.1
 SERVER_PORT=3001
-SCRAPER_RATE_LIMIT=2
-SCRAPER_MAX_RETRIES=3
+
+# Scraper
+SCRAPER_RATE_LIMIT=2        # Requests per second
+SCRAPER_MAX_RETRIES=3       # Retry attempts on failure
+
+# Logging
+RUST_LOG=info,aibase_scraper=debug
 ```
 
 ## Development
 
-### Backend
+### Backend Development
 
 ```bash
 cd backend
-cargo watch -x run  # Auto-reload on changes
+cargo watch -x run    # Auto-reload on changes
+cargo build --release # Production build
 ```
 
-### Frontend
+### Frontend Development
 
 ```bash
 cd frontend
-bun dev  # Vite dev server with HMR
+bun dev              # Vite dev server with HMR
+bun run build        # Production build
+bun run preview      # Preview production build
 ```
+
+### Database Management
+
+```bash
+# Reset database
+docker compose down -v
+docker compose up -d
+
+# View logs
+docker compose logs -f postgres
+```
+
+## Performance
+
+| Metric | Value |
+|--------|-------|
+| Rate Limit | 2 requests/second |
+| Max Range | 50,000 articles/run |
+| Estimated Time (10k articles) | ~85 minutes |
+
+The scraper handles 404s gracefully and skips non-existent article IDs automatically.
 
 ## License
 
