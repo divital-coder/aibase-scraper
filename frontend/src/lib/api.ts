@@ -53,7 +53,7 @@ export async function getArticle(id: string): Promise<Article> {
 }
 
 export async function deleteArticle(id: string): Promise<void> {
-  return fetchApi(`/articles/${id}`, { method: 'DELETE' })
+  return fetchApi(`/articles/${id}/delete`, { method: 'DELETE' })
 }
 
 // Scraper

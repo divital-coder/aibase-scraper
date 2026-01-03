@@ -60,11 +60,8 @@ async fn main() -> Result<()> {
     let app = Router::new()
         // Articles
         .route("/api/articles", get(handlers::articles::list_articles))
-        .route("/api/articles/{id}", get(handlers::articles::get_article))
-        .route(
-            "/api/articles/{id}",
-            axum::routing::delete(handlers::articles::delete_article),
-        )
+        .route("/api/articles/:id", get(handlers::articles::get_article))
+        .route("/api/articles/:id/delete", axum::routing::delete(handlers::articles::delete_article))
         // Scraper
         .route("/api/scraper/start", post(handlers::scraper::start_scrape))
         .route("/api/scraper/start-range", post(handlers::scraper::start_range_scrape))
@@ -76,10 +73,7 @@ async fn main() -> Result<()> {
         .route("/api/stats/tags", get(handlers::stats::get_tag_stats))
         // Settings
         .route("/api/settings", get(handlers::settings::get_settings))
-        .route(
-            "/api/settings/{key}",
-            patch(handlers::settings::update_setting),
-        )
+        .route("/api/settings/:key", patch(handlers::settings::update_setting))
         // WebSocket
         .route("/ws/scrape-progress", get(api::websocket::ws_handler))
         .layer(TraceLayer::new_for_http())
