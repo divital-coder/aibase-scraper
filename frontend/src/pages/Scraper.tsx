@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { useScraperStatus, useScrapeRuns, useStartScrape, useStopScrape, useStartRangeScrape } from '@/hooks/useScraper'
 import { useScrapeProgress } from '@/hooks/useWebSocket'
+import { useSources } from '@/hooks/useArticles'
 import { formatDateTime } from '@/lib/utils'
 import {
   Play,
@@ -20,14 +21,18 @@ import {
   AlertTriangle,
   Hash,
   Layers,
+  Globe,
 } from 'lucide-react'
 
 export default function Scraper() {
   const [maxPages, setMaxPages] = useState('10')
+  const [source, setSource] = useState('aibase')
   const [scrapeMode, setScrapeMode] = useState<'pagination' | 'range'>('range')
   const [scrapeType, setScrapeType] = useState<'incremental' | 'full'>('incremental')
   const [startId, setStartId] = useState('14000')
   const [endId, setEndId] = useState('24178')
+
+  const { data: sources } = useSources()
 
   const { data: status } = useScraperStatus()
   const { data: runs } = useScrapeRuns(10)
@@ -44,14 +49,26 @@ export default function Scraper() {
         start_id: parseInt(startId) || 14000,
         end_id: parseInt(endId) || 24178,
         force_rescrape: false,
+        source,
       })
     } else {
       startMutation.mutate({
         scrape_type: scrapeType,
         max_pages: parseInt(maxPages) || 10,
+        source,
       })
     }
   }
+
+  // When changing to smol.ai source, switch to pagination mode (range not supported)
+  const handleSourceChange = (newSource: string) => {
+    setSource(newSource)
+    if (newSource !== 'aibase' && scrapeMode === 'range') {
+      setScrapeMode('pagination')
+    }
+  }
+
+  const isRangeSupported = source === 'aibase'
 
   const handleStop = () => {
     stopMutation.mutate()
@@ -114,17 +131,42 @@ export default function Scraper() {
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="space-y-3">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <Globe className="h-4 w-4" />
+                Source
+              </label>
+              <div className="flex gap-2">
+                {sources?.map((s) => (
+                  <Button
+                    key={s.id}
+                    variant={source === s.id ? 'default' : 'outline'}
+                    onClick={() => handleSourceChange(s.id)}
+                    disabled={isRunning}
+                    className={
+                      source === s.id
+                        ? 'bg-indigo-600 hover:bg-indigo-700'
+                        : 'bg-secondary/30'
+                    }
+                  >
+                    {s.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-3">
               <label className="text-sm font-medium">Scrape Mode</label>
               <div className="flex gap-2">
                 <Button
                   variant={scrapeMode === 'range' ? 'default' : 'outline'}
                   onClick={() => setScrapeMode('range')}
-                  disabled={isRunning}
+                  disabled={isRunning || !isRangeSupported}
                   className={
                     scrapeMode === 'range'
                       ? 'bg-green-600 hover:bg-green-700'
                       : 'bg-secondary/30'
                   }
+                  title={!isRangeSupported ? 'ID Range mode only available for AIBase' : ''}
                 >
                   <Hash className="h-4 w-4 mr-1" />
                   ID Range
@@ -140,12 +182,14 @@ export default function Scraper() {
                   }
                 >
                   <Layers className="h-4 w-4 mr-1" />
-                  Pagination
+                  {source === 'smolai' ? 'Archive' : 'Pagination'}
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
                 {scrapeMode === 'range'
                   ? 'Scrape articles by ID range - best for initial data collection'
+                  : source === 'smolai'
+                  ? 'Scrape from archive page - discovers all issues'
                   : 'Scrape through listing pages - best for regular updates'}
               </p>
             </div>
@@ -249,7 +293,9 @@ export default function Scraper() {
                 disabled={isPending}
               >
                 <Play className="h-4 w-4 mr-2" />
-                {scrapeMode === 'range' ? 'Start Range Scrape' : 'Start Scrape'}
+                {scrapeMode === 'range'
+                  ? 'Start Range Scrape'
+                  : `Start ${sources?.find(s => s.id === source)?.name || source} Scrape`}
               </Button>
             )}
           </CardContent>

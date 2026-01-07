@@ -2,6 +2,9 @@ pub mod article;
 pub mod client;
 pub mod listing;
 pub mod selectors;
+pub mod sources;
+
+pub use sources::{Source, SourceInfo};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

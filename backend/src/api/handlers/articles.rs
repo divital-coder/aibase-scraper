@@ -18,6 +18,7 @@ pub struct ListArticlesQuery {
     pub per_page: i64,
     pub search: Option<String>,
     pub tag: Option<String>,
+    pub source: Option<String>,
 }
 
 fn default_page() -> i64 {
@@ -55,6 +56,7 @@ pub async fn list_articles(
         per_page,
         query.search.as_deref(),
         query.tag.as_deref(),
+        query.source.as_deref(),
     )
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

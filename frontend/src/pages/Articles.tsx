@@ -5,17 +5,24 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useArticles } from '@/hooks/useArticles'
+import { useArticles, useSources } from '@/hooks/useArticles'
 import { formatDate, truncate } from '@/lib/utils'
-import { Search, ChevronLeft, ChevronRight, ExternalLink, ImageOff } from 'lucide-react'
+import { Search, ChevronLeft, ChevronRight, ExternalLink, ImageOff, Globe } from 'lucide-react'
 
 export default function Articles() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
+  const [sourceFilter, setSourceFilter] = useState<string | undefined>(undefined)
   const perPage = 9
 
-  const { data, isLoading } = useArticles({ page, per_page: perPage, search: search || undefined })
+  const { data: sources } = useSources()
+  const { data, isLoading } = useArticles({
+    page,
+    per_page: perPage,
+    search: search || undefined,
+    source: sourceFilter,
+  })
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
@@ -29,7 +36,8 @@ export default function Articles() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Articles</h1>
           <p className="text-muted-foreground mt-1">
-            {data?.pagination.total.toLocaleString() || 0} articles in database
+            {data?.pagination.total.toLocaleString() || 0} articles
+            {sourceFilter && ` from ${sources?.find(s => s.id === sourceFilter)?.name || sourceFilter}`}
           </p>
         </div>
         <form onSubmit={handleSearch} className="flex gap-2">
@@ -46,6 +54,30 @@ export default function Articles() {
             Search
           </Button>
         </form>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Globe className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm text-muted-foreground mr-2">Source:</span>
+        <Button
+          variant={sourceFilter === undefined ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => { setSourceFilter(undefined); setPage(1) }}
+          className={sourceFilter === undefined ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-secondary/30'}
+        >
+          All
+        </Button>
+        {sources?.map((s) => (
+          <Button
+            key={s.id}
+            variant={sourceFilter === s.id ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => { setSourceFilter(s.id); setPage(1) }}
+            className={sourceFilter === s.id ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-secondary/30'}
+          >
+            {s.name}
+          </Button>
+        ))}
       </div>
 
       {search && (
@@ -137,9 +169,21 @@ export default function Articles() {
                         </p>
                       )}
                       <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
-                        <span className="text-xs text-muted-foreground">
-                          {formatDate(article.published_at)}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant="secondary"
+                            className={`text-xs ${
+                              article.source === 'AIBase'
+                                ? 'bg-green-500/10 text-green-400 border-green-500/20'
+                                : 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                            }`}
+                          >
+                            {article.source}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {formatDate(article.published_at)}
+                          </span>
+                        </div>
                         <ExternalLink className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                       </div>
                       {article.tags.length > 0 && (

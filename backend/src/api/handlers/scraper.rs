@@ -12,7 +12,10 @@ use crate::db::{
     models::{ScrapeRun, ScrapeStatus, ScrapeType},
     queries,
 };
-use crate::scraper::{article::ArticleScraper, client::ScraperClient, listing::ListingScraper, ProgressType, ScrapeProgress};
+use crate::scraper::{
+    sources::{aibase::AIBaseScraper, smolai::SmolAIScraper},
+    Source, ProgressType, ScrapeProgress,
+};
 use crate::AppState;
 
 // Global flag for cancellation
@@ -25,6 +28,12 @@ pub struct StartScrapeRequest {
     pub max_pages: Option<u32>,
     #[serde(default)]
     pub force_rescrape: bool,
+    #[serde(default = "default_source")]
+    pub source: String,
+}
+
+fn default_source() -> String {
+    "aibase".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,6 +42,8 @@ pub struct StartRangeScrapeRequest {
     pub end_id: u32,
     #[serde(default)]
     pub force_rescrape: bool,
+    #[serde(default = "default_source")]
+    pub source: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -59,6 +70,12 @@ pub async fn start_scrape(
     State(state): State<Arc<AppState>>,
     Json(request): Json<StartScrapeRequest>,
 ) -> Result<Json<ScrapeStartResponse>, (StatusCode, String)> {
+    // Validate source
+    let source = Source::from_str(&request.source).ok_or((
+        StatusCode::BAD_REQUEST,
+        format!("Unknown source: {}", request.source),
+    ))?;
+
     // Check if already running
     if let Some(run) = queries::get_running_scrape(&state.pool)
         .await
@@ -83,6 +100,7 @@ pub async fn start_scrape(
         &state.pool,
         scrape_type,
         Some(serde_json::json!({
+            "source": source.id(),
             "max_pages": max_pages,
             "force_rescrape": request.force_rescrape,
             "stop_on_existing": stop_on_existing,
@@ -100,11 +118,12 @@ pub async fn start_scrape(
     let progress_tx = state.progress_tx.clone();
 
     tokio::spawn(async move {
-        let result = run_scrape(
+        let result = run_source_scrape(
             pool.clone(),
             config.scraper_rate_limit,
             config.scraper_max_retries,
             run_id,
+            source,
             max_pages,
             stop_on_existing,
             request.force_rescrape,
@@ -135,21 +154,34 @@ pub async fn start_scrape(
             articles_new: 0,
             articles_failed: 0,
             current_article: None,
-            message: Some(format!("Scrape {:?}", status)),
+            message: Some(format!("{} scrape {:?}", source.display_name(), status)),
         });
     });
 
     Ok(Json(ScrapeStartResponse {
         run_id,
-        message: "Scrape started".to_string(),
+        message: format!("{} scrape started", source.display_name()),
     }))
 }
 
-// New endpoint: Scrape by ID range
+// ID range scrape: only for AIBase
 pub async fn start_range_scrape(
     State(state): State<Arc<AppState>>,
     Json(request): Json<StartRangeScrapeRequest>,
 ) -> Result<Json<ScrapeStartResponse>, (StatusCode, String)> {
+    // Validate source - only AIBase supports range scraping
+    let source = Source::from_str(&request.source).ok_or((
+        StatusCode::BAD_REQUEST,
+        format!("Unknown source: {}", request.source),
+    ))?;
+
+    if !matches!(source, Source::AIBase) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Range scraping is only supported for AIBase".to_string(),
+        ));
+    }
+
     // Validate range
     if request.start_id >= request.end_id {
         return Err((
@@ -182,6 +214,7 @@ pub async fn start_range_scrape(
         &state.pool,
         ScrapeType::Full,
         Some(serde_json::json!({
+            "source": source.id(),
             "mode": "range",
             "start_id": request.start_id,
             "end_id": request.end_id,
@@ -242,7 +275,7 @@ pub async fn start_range_scrape(
     Ok(Json(ScrapeStartResponse {
         run_id,
         message: format!(
-            "Range scrape started: {} to {} ({} articles)",
+            "AIBase range scrape started: {} to {} ({} articles)",
             request.start_id, request.end_id, total_articles
         ),
     }))
@@ -258,8 +291,8 @@ async fn run_range_scrape(
     force_rescrape: bool,
     progress_tx: tokio::sync::broadcast::Sender<ScrapeProgress>,
 ) -> anyhow::Result<()> {
-    let client = ScraperClient::new(rate_limit, max_retries)?;
-    let article_scraper = ArticleScraper::new(client);
+    let scraper = AIBaseScraper::new(rate_limit, max_retries)?;
+    let source_name = Source::AIBase.display_name();
 
     let total = end_id - start_id + 1;
     let mut processed = 0;
@@ -278,10 +311,10 @@ async fn run_range_scrape(
         articles_new: 0,
         articles_failed: 0,
         current_article: None,
-        message: Some(format!("Starting range scrape: {} to {}", start_id, end_id)),
+        message: Some(format!("Starting AIBase range scrape: {} to {}", start_id, end_id)),
     });
 
-    tracing::info!("Starting range scrape: {} to {} ({} articles)", start_id, end_id, total);
+    tracing::info!("Starting AIBase range scrape: {} to {} ({} articles)", start_id, end_id, total);
 
     for article_id in start_id..=end_id {
         // Check cancellation
@@ -296,7 +329,7 @@ async fn run_range_scrape(
         processed += 1;
 
         // Check if article already exists
-        let exists = queries::article_exists(&pool, &external_id).await?;
+        let exists = queries::article_exists(&pool, source_name, &external_id).await?;
 
         if exists && !force_rescrape {
             articles_skipped += 1;
@@ -331,11 +364,11 @@ async fn run_range_scrape(
         });
 
         // Scrape article
-        match article_scraper.scrape_article(&external_id).await {
+        match scraper.scrape_article(&external_id).await {
             Ok(article) => {
                 articles_found += 1;
                 if exists {
-                    queries::update_article(&pool, &external_id, &article).await?;
+                    queries::update_article(&pool, source_name, &external_id, &article).await?;
                 } else {
                     queries::insert_article(&pool, &article).await?;
                     articles_new += 1;
@@ -395,7 +428,49 @@ async fn run_range_scrape(
     Ok(())
 }
 
-async fn run_scrape(
+async fn run_source_scrape(
+    pool: sqlx::PgPool,
+    rate_limit: u32,
+    max_retries: u32,
+    run_id: Uuid,
+    source: Source,
+    max_pages: u32,
+    stop_on_existing: bool,
+    force_rescrape: bool,
+    progress_tx: tokio::sync::broadcast::Sender<ScrapeProgress>,
+) -> anyhow::Result<()> {
+    let source_name = source.display_name();
+
+    // Send start message
+    let _ = progress_tx.send(ScrapeProgress {
+        run_id,
+        progress_type: ProgressType::Started,
+        pages_scraped: 0,
+        total_pages: None,
+        articles_found: 0,
+        articles_new: 0,
+        articles_failed: 0,
+        current_article: None,
+        message: Some(format!("Starting {} scrape...", source_name)),
+    });
+
+    match source {
+        Source::AIBase => {
+            run_aibase_scrape(
+                pool, rate_limit, max_retries, run_id, max_pages, stop_on_existing,
+                force_rescrape, progress_tx,
+            ).await
+        }
+        Source::SmolAI => {
+            run_smolai_scrape(
+                pool, rate_limit, max_retries, run_id, max_pages, stop_on_existing,
+                force_rescrape, progress_tx,
+            ).await
+        }
+    }
+}
+
+async fn run_aibase_scrape(
     pool: sqlx::PgPool,
     rate_limit: u32,
     max_retries: u32,
@@ -405,59 +480,45 @@ async fn run_scrape(
     force_rescrape: bool,
     progress_tx: tokio::sync::broadcast::Sender<ScrapeProgress>,
 ) -> anyhow::Result<()> {
-    let client = ScraperClient::new(rate_limit, max_retries)?;
-    let listing_scraper = ListingScraper::new(ScraperClient::new(rate_limit, max_retries)?);
-    let article_scraper = ArticleScraper::new(client);
+    let scraper = AIBaseScraper::new(rate_limit, max_retries)?;
+    let source_name = Source::AIBase.display_name();
 
     let mut pages_scraped = 0;
     let mut articles_found = 0;
     let mut articles_new = 0;
     let mut articles_failed = 0;
 
-    // Send start message
-    let _ = progress_tx.send(ScrapeProgress {
-        run_id,
-        progress_type: ProgressType::Started,
-        pages_scraped: 0,
-        total_pages: Some(max_pages as i32),
-        articles_found: 0,
-        articles_new: 0,
-        articles_failed: 0,
-        current_article: None,
-        message: Some("Starting scrape...".to_string()),
-    });
-
     for page in 1..=max_pages {
         // Check cancellation
         if let Some(cancel_id) = *CANCEL_FLAG.lock().await {
             if cancel_id == run_id {
-                tracing::info!("Scrape cancelled");
+                tracing::info!("AIBase scrape cancelled");
                 return Ok(());
             }
         }
 
-        tracing::info!("Scraping page {}/{}", page, max_pages);
+        tracing::info!("AIBase: Scraping page {}/{}", page, max_pages);
 
-        let previews = match listing_scraper.scrape_page(page).await {
+        let previews = match scraper.scrape_listing_page(page).await {
             Ok(p) => p,
             Err(e) => {
-                tracing::error!("Failed to scrape page {}: {}", page, e);
+                tracing::error!("AIBase: Failed to scrape page {}: {}", page, e);
                 continue;
             }
         };
 
         if previews.is_empty() {
-            tracing::info!("No more articles found at page {}", page);
+            tracing::info!("AIBase: No more articles found at page {}", page);
             break;
         }
 
         let mut all_existing = true;
 
-        for preview in &previews {
+        for (external_id, _title) in &previews {
             articles_found += 1;
 
             // Check if article already exists
-            let exists = queries::article_exists(&pool, &preview.external_id).await?;
+            let exists = queries::article_exists(&pool, source_name, external_id).await?;
 
             if exists && !force_rescrape {
                 continue;
@@ -474,22 +535,22 @@ async fn run_scrape(
                 articles_found,
                 articles_new,
                 articles_failed,
-                current_article: Some(preview.external_id.clone()),
+                current_article: Some(external_id.clone()),
                 message: None,
             });
 
             // Scrape article
-            match article_scraper.scrape_article(&preview.external_id).await {
+            match scraper.scrape_article(external_id).await {
                 Ok(article) => {
                     if exists {
-                        queries::update_article(&pool, &preview.external_id, &article).await?;
+                        queries::update_article(&pool, source_name, external_id, &article).await?;
                     } else {
                         queries::insert_article(&pool, &article).await?;
                         articles_new += 1;
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to scrape article {}: {}", preview.external_id, e);
+                    tracing::error!("AIBase: Failed to scrape article {}: {}", external_id, e);
                     articles_failed += 1;
                 }
             }
@@ -510,17 +571,143 @@ async fn run_scrape(
 
         // Stop if all articles on page exist (incremental mode)
         if all_existing && stop_on_existing {
-            tracing::info!("All articles on page {} already exist, stopping", page);
+            tracing::info!("AIBase: All articles on page {} already exist, stopping", page);
             break;
         }
     }
 
     tracing::info!(
-        "Scrape complete: {} pages, {} articles found, {} new, {} failed",
-        pages_scraped,
-        articles_found,
+        "AIBase scrape complete: {} pages, {} articles found, {} new, {} failed",
+        pages_scraped, articles_found, articles_new, articles_failed
+    );
+
+    Ok(())
+}
+
+async fn run_smolai_scrape(
+    pool: sqlx::PgPool,
+    rate_limit: u32,
+    max_retries: u32,
+    run_id: Uuid,
+    max_count: u32,
+    stop_on_existing: bool,
+    force_rescrape: bool,
+    progress_tx: tokio::sync::broadcast::Sender<ScrapeProgress>,
+) -> anyhow::Result<()> {
+    let scraper = SmolAIScraper::new(rate_limit, max_retries)?;
+    let source_name = Source::SmolAI.display_name();
+
+    // Discover all articles from archive
+    tracing::info!("smol.ai: Discovering articles from archive...");
+    let article_ids = scraper.discover_articles(Some(max_count)).await?;
+    let total = article_ids.len() as i32;
+
+    tracing::info!("smol.ai: Found {} articles to process", total);
+
+    let _ = progress_tx.send(ScrapeProgress {
+        run_id,
+        progress_type: ProgressType::Progress,
+        pages_scraped: 0,
+        total_pages: Some(total),
+        articles_found: total,
+        articles_new: 0,
+        articles_failed: 0,
+        current_article: None,
+        message: Some(format!("Discovered {} articles", total)),
+    });
+
+    let mut processed = 0;
+    let mut articles_new = 0;
+    let mut articles_failed = 0;
+
+    for external_id in &article_ids {
+        // Check cancellation
+        if let Some(cancel_id) = *CANCEL_FLAG.lock().await {
+            if cancel_id == run_id {
+                tracing::info!("smol.ai: Scrape cancelled");
+                return Ok(());
+            }
+        }
+
+        processed += 1;
+
+        // Check if article already exists
+        let exists = queries::article_exists(&pool, source_name, external_id).await?;
+
+        if exists && !force_rescrape {
+            // In incremental mode, stop if we hit existing articles
+            if stop_on_existing {
+                tracing::info!("smol.ai: Found existing article {}, stopping", external_id);
+                break;
+            }
+            continue;
+        }
+
+        // Send progress
+        let _ = progress_tx.send(ScrapeProgress {
+            run_id,
+            progress_type: ProgressType::Progress,
+            pages_scraped: processed,
+            total_pages: Some(total),
+            articles_found: total,
+            articles_new,
+            articles_failed,
+            current_article: Some(external_id.clone()),
+            message: None,
+        });
+
+        // Scrape article
+        match scraper.scrape_article(external_id).await {
+            Ok(article) => {
+                if exists {
+                    queries::update_article(&pool, source_name, external_id, &article).await?;
+                } else {
+                    queries::insert_article(&pool, &article).await?;
+                    articles_new += 1;
+                }
+
+                // Log progress every 50 articles
+                if articles_new % 50 == 0 {
+                    tracing::info!(
+                        "smol.ai: Progress: {}/{} processed, {} new, {} failed",
+                        processed, total, articles_new, articles_failed
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!("smol.ai: Failed to scrape article {}: {}", external_id, e);
+                articles_failed += 1;
+            }
+        }
+
+        // Update database progress every 20 articles
+        if processed % 20 == 0 {
+            queries::update_scrape_run_progress(
+                &pool,
+                run_id,
+                processed,
+                total,
+                articles_new,
+                articles_failed,
+            )
+            .await?;
+        }
+    }
+
+    // Final update
+    queries::update_scrape_run_progress(
+        &pool,
+        run_id,
+        processed,
+        total,
         articles_new,
-        articles_failed
+        articles_failed,
+    )
+    .await?;
+
+    tracing::info!(
+        "smol.ai scrape complete: {}/{} processed, {} new, {} failed",
+        processed, total, articles_new, articles_failed
     );
 
     Ok(())

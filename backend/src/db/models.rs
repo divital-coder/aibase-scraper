@@ -32,6 +32,7 @@ pub struct ArticlePreview {
     pub thumbnail_url: Option<String>,
     pub view_count: Option<i64>,
     pub tags: Vec<String>,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

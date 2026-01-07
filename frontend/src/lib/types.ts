@@ -11,6 +11,7 @@ export interface Article {
   view_count: number | null
   read_time_minutes: number | null
   thumbnail_url: string | null
+  tags?: string[]
   scraped_at: string
   updated_at: string
 }
@@ -24,6 +25,7 @@ export interface ArticlePreview {
   thumbnail_url: string | null
   view_count: number | null
   tags: string[]
+  source: string
 }
 
 export interface PaginatedResponse<T> {
@@ -81,4 +83,10 @@ export interface ScraperSetting {
   key: string
   value: Record<string, unknown>
   updated_at: string
+}
+
+export interface SourceInfo {
+  id: string
+  name: string
+  base_url: string
 }

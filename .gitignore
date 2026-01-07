@@ -6,6 +6,8 @@ backend/.env
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+frontend/public/knowledge
+frontend/public/inspiration-collage.mp4
 
 # IDE
 .idea/

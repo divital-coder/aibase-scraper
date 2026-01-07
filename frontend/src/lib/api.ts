@@ -4,6 +4,7 @@ import type {
   PaginatedResponse,
   ScrapeRun,
   ScraperSetting,
+  SourceInfo,
   Stats,
   TagStat,
 } from './types'
@@ -37,12 +38,14 @@ export async function getArticles(params: {
   per_page?: number
   search?: string
   tag?: string
+  source?: string
 }): Promise<PaginatedResponse<ArticlePreview>> {
   const searchParams = new URLSearchParams()
   if (params.page) searchParams.set('page', String(params.page))
   if (params.per_page) searchParams.set('per_page', String(params.per_page))
   if (params.search) searchParams.set('search', params.search)
   if (params.tag) searchParams.set('tag', params.tag)
+  if (params.source) searchParams.set('source', params.source)
 
   const query = searchParams.toString()
   return fetchApi(`/articles${query ? `?${query}` : ''}`)
@@ -61,6 +64,7 @@ export async function startScrape(params: {
   scrape_type?: 'full' | 'incremental'
   max_pages?: number
   force_rescrape?: boolean
+  source?: string
 }): Promise<{ run_id: string; message: string }> {
   return fetchApi('/scraper/start', {
     method: 'POST',
@@ -76,11 +80,17 @@ export async function startRangeScrape(params: {
   start_id: number
   end_id: number
   force_rescrape?: boolean
+  source?: string
 }): Promise<{ run_id: string; message: string }> {
   return fetchApi('/scraper/start-range', {
     method: 'POST',
     body: JSON.stringify(params),
   })
+}
+
+// Sources
+export async function getSources(): Promise<SourceInfo[]> {
+  return fetchApi('/sources')
 }
 
 export async function getScraperStatus(): Promise<{

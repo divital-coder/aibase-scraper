@@ -7,6 +7,7 @@ use super::models::{
     Article, ArticlePreview, NewArticle, ScrapeRun, ScrapeStatus, ScrapeType, ScraperSetting,
     Stats, TagStat,
 };
+use crate::scraper::{Source, SourceInfo};
 
 // Article queries
 
@@ -16,79 +17,167 @@ pub async fn get_articles(
     per_page: i64,
     search: Option<&str>,
     tag: Option<&str>,
+    source: Option<&str>,
 ) -> Result<(Vec<ArticlePreview>, i64)> {
     let offset = (page - 1) * per_page;
 
-    let count: (i64,) = if let Some(search_term) = search {
-        sqlx::query_as(
-            r#"
-            SELECT COUNT(*) FROM articles
-            WHERE search_vector @@ plainto_tsquery('english', $1)
-            "#,
-        )
-        .bind(search_term)
-        .fetch_one(pool)
-        .await?
-    } else if let Some(tag_name) = tag {
-        sqlx::query_as(
-            r#"
-            SELECT COUNT(DISTINCT a.id) FROM articles a
-            JOIN article_tags at ON a.id = at.article_id
-            JOIN tags t ON at.tag_id = t.id
-            WHERE t.name = $1
-            "#,
-        )
-        .bind(tag_name)
-        .fetch_one(pool)
-        .await?
-    } else {
-        sqlx::query_as("SELECT COUNT(*) FROM articles")
+    // Build dynamic query based on filters
+    let (count, articles) = match (search, tag, source) {
+        (Some(search_term), _, Some(src)) => {
+            let count: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM articles WHERE search_vector @@ plainto_tsquery('english', $1) AND source = $2",
+            )
+            .bind(search_term)
+            .bind(src)
             .fetch_one(pool)
-            .await?
-    };
+            .await?;
 
-    let articles: Vec<Article> = if let Some(search_term) = search {
-        sqlx::query_as(
-            r#"
-            SELECT * FROM articles
-            WHERE search_vector @@ plainto_tsquery('english', $1)
-            ORDER BY published_at DESC NULLS LAST
-            LIMIT $2 OFFSET $3
-            "#,
-        )
-        .bind(search_term)
-        .bind(per_page)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?
-    } else if let Some(tag_name) = tag {
-        sqlx::query_as(
-            r#"
-            SELECT DISTINCT a.* FROM articles a
-            JOIN article_tags at ON a.id = at.article_id
-            JOIN tags t ON at.tag_id = t.id
-            WHERE t.name = $1
-            ORDER BY a.published_at DESC NULLS LAST
-            LIMIT $2 OFFSET $3
-            "#,
-        )
-        .bind(tag_name)
-        .bind(per_page)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?
-    } else {
-        sqlx::query_as(
-            r#"
-            SELECT * FROM articles
-            ORDER BY published_at DESC NULLS LAST
-            LIMIT $1 OFFSET $2
-            "#,
-        )
-        .bind(per_page)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?
+            let articles: Vec<Article> = sqlx::query_as(
+                r#"
+                SELECT * FROM articles
+                WHERE search_vector @@ plainto_tsquery('english', $1) AND source = $2
+                ORDER BY published_at DESC NULLS LAST
+                LIMIT $3 OFFSET $4
+                "#,
+            )
+            .bind(search_term)
+            .bind(src)
+            .bind(per_page)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+
+            (count.0, articles)
+        }
+        (Some(search_term), _, None) => {
+            let count: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM articles WHERE search_vector @@ plainto_tsquery('english', $1)",
+            )
+            .bind(search_term)
+            .fetch_one(pool)
+            .await?;
+
+            let articles: Vec<Article> = sqlx::query_as(
+                r#"
+                SELECT * FROM articles
+                WHERE search_vector @@ plainto_tsquery('english', $1)
+                ORDER BY published_at DESC NULLS LAST
+                LIMIT $2 OFFSET $3
+                "#,
+            )
+            .bind(search_term)
+            .bind(per_page)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+
+            (count.0, articles)
+        }
+        (None, Some(tag_name), Some(src)) => {
+            let count: (i64,) = sqlx::query_as(
+                r#"
+                SELECT COUNT(DISTINCT a.id) FROM articles a
+                JOIN article_tags at ON a.id = at.article_id
+                JOIN tags t ON at.tag_id = t.id
+                WHERE t.name = $1 AND a.source = $2
+                "#,
+            )
+            .bind(tag_name)
+            .bind(src)
+            .fetch_one(pool)
+            .await?;
+
+            let articles: Vec<Article> = sqlx::query_as(
+                r#"
+                SELECT DISTINCT a.* FROM articles a
+                JOIN article_tags at ON a.id = at.article_id
+                JOIN tags t ON at.tag_id = t.id
+                WHERE t.name = $1 AND a.source = $2
+                ORDER BY a.published_at DESC NULLS LAST
+                LIMIT $3 OFFSET $4
+                "#,
+            )
+            .bind(tag_name)
+            .bind(src)
+            .bind(per_page)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+
+            (count.0, articles)
+        }
+        (None, Some(tag_name), None) => {
+            let count: (i64,) = sqlx::query_as(
+                r#"
+                SELECT COUNT(DISTINCT a.id) FROM articles a
+                JOIN article_tags at ON a.id = at.article_id
+                JOIN tags t ON at.tag_id = t.id
+                WHERE t.name = $1
+                "#,
+            )
+            .bind(tag_name)
+            .fetch_one(pool)
+            .await?;
+
+            let articles: Vec<Article> = sqlx::query_as(
+                r#"
+                SELECT DISTINCT a.* FROM articles a
+                JOIN article_tags at ON a.id = at.article_id
+                JOIN tags t ON at.tag_id = t.id
+                WHERE t.name = $1
+                ORDER BY a.published_at DESC NULLS LAST
+                LIMIT $2 OFFSET $3
+                "#,
+            )
+            .bind(tag_name)
+            .bind(per_page)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+
+            (count.0, articles)
+        }
+        (None, None, Some(src)) => {
+            let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM articles WHERE source = $1")
+                .bind(src)
+                .fetch_one(pool)
+                .await?;
+
+            let articles: Vec<Article> = sqlx::query_as(
+                r#"
+                SELECT * FROM articles
+                WHERE source = $1
+                ORDER BY published_at DESC NULLS LAST
+                LIMIT $2 OFFSET $3
+                "#,
+            )
+            .bind(src)
+            .bind(per_page)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+
+            (count.0, articles)
+        }
+        (None, None, None) => {
+            let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM articles")
+                .fetch_one(pool)
+                .await?;
+
+            let articles: Vec<Article> = sqlx::query_as(
+                r#"
+                SELECT * FROM articles
+                ORDER BY published_at DESC NULLS LAST
+                LIMIT $1 OFFSET $2
+                "#,
+            )
+            .bind(per_page)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+
+            (count.0, articles)
+        }
     };
 
     let mut previews = Vec::new();
@@ -103,10 +192,11 @@ pub async fn get_articles(
             thumbnail_url: article.thumbnail_url,
             view_count: article.view_count,
             tags,
+            source: article.source.unwrap_or_else(|| "AIBase".to_string()),
         });
     }
 
-    Ok((previews, count.0))
+    Ok((previews, count))
 }
 
 pub async fn get_article_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Article>> {
@@ -127,9 +217,10 @@ pub async fn get_article_by_external_id(pool: &PgPool, external_id: &str) -> Res
     Ok(article)
 }
 
-pub async fn article_exists(pool: &PgPool, external_id: &str) -> Result<bool> {
+pub async fn article_exists(pool: &PgPool, source: &str, external_id: &str) -> Result<bool> {
     let result: (bool,) =
-        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM articles WHERE external_id = $1)")
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM articles WHERE source = $1 AND external_id = $2)")
+            .bind(source)
             .bind(external_id)
             .fetch_one(pool)
             .await?;
@@ -176,22 +267,22 @@ pub async fn insert_article(pool: &PgPool, article: &NewArticle) -> Result<Uuid>
     Ok(id.0)
 }
 
-pub async fn update_article(pool: &PgPool, external_id: &str, article: &NewArticle) -> Result<()> {
+pub async fn update_article(pool: &PgPool, source: &str, external_id: &str, article: &NewArticle) -> Result<()> {
     sqlx::query(
         r#"
         UPDATE articles SET
-            title = $2, content = $3, excerpt = $4, author = $5, source = $6,
+            title = $3, content = $4, excerpt = $5, author = $6,
             published_at = $7, view_count = $8, read_time_minutes = $9,
             thumbnail_url = $10, content_hash = $11
-        WHERE external_id = $1
+        WHERE source = $1 AND external_id = $2
         "#,
     )
+    .bind(source)
     .bind(external_id)
     .bind(&article.title)
     .bind(&article.content)
     .bind(&article.excerpt)
     .bind(&article.author)
-    .bind(&article.source)
     .bind(article.published_at)
     .bind(article.view_count)
     .bind(article.read_time_minutes)
@@ -415,4 +506,10 @@ pub async fn update_setting(pool: &PgPool, key: &str, value: serde_json::Value) 
     .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+// Source queries
+
+pub fn get_sources() -> Vec<SourceInfo> {
+    Source::all().into_iter().map(|s| s.info()).collect()
 }

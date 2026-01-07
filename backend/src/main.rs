@@ -71,6 +71,8 @@ async fn main() -> Result<()> {
         // Stats
         .route("/api/stats", get(handlers::stats::get_stats))
         .route("/api/stats/tags", get(handlers::stats::get_tag_stats))
+        // Sources
+        .route("/api/sources", get(handlers::sources::list_sources))
         // Settings
         .route("/api/settings", get(handlers::settings::get_settings))
         .route("/api/settings/:key", patch(handlers::settings::update_setting))

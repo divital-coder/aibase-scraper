@@ -38,6 +38,26 @@ Modern SPA with real-time updates.
 | State | TanStack Query |
 | Real-time | WebSocket |
 
+### 4. Knowledge Base
+
+The frontend includes a Knowledge Base section that displays markdown notes from the [social_presence](https://github.com/divital-coder/social_presence) repository via symlink.
+
+| Feature | Technology |
+|---------|------------|
+| Rendering | react-markdown |
+| GFM Support | remark-gfm |
+| Symlink | /public/knowledge -> social_presence |
+
+**Setup Knowledge Base (optional):**
+
+```bash
+# Clone the social_presence repo
+git clone https://github.com/divital-coder/social_presence ~/Desktop/social_presence
+
+# Create symlink in frontend
+ln -s ~/Desktop/social_presence frontend/public/knowledge
+```
+
 ## Prerequisites
 
 Before starting, ensure you have the following installed:
